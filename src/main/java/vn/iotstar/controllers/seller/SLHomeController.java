@@ -1,0 +1,402 @@
+package vn.iotstar.controllers.seller;
+
+import java.beans.PropertyEditorSupport;
+import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.stereotype.Controller;
+import org.springframework.ui.Model;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.ResponseBody;
+import org.springframework.web.multipart.MultipartFile;
+
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpSession;
+import vn.iotstar.entity.Branch;
+import vn.iotstar.entity.BranchMilkTea;
+import vn.iotstar.entity.MilkTea;
+import vn.iotstar.entity.MilkTeaType;
+import vn.iotstar.entity.Order;
+import vn.iotstar.entity.User;
+import vn.iotstar.enums.OrderStatus;
+import vn.iotstar.model.BranchDto;
+import vn.iotstar.model.MilkTeaDto;
+
+import vn.iotstar.services.IBranchMilkTeaService;
+import vn.iotstar.services.IBranchService;
+import vn.iotstar.services.IMilkTeaService;
+import vn.iotstar.services.IMilkTeaTypeService;
+import vn.iotstar.services.IOrderService;
+import vn.iotstar.utils.PathConstants;
+
+import org.springframework.web.bind.WebDataBinder;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.InitBinder;
+import org.springframework.web.bind.annotation.ModelAttribute;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+
+@Controller
+@RequestMapping("seller")
+public class SLHomeController {
+	@Autowired
+	private IMilkTeaService iMilkTeaService;
+
+	@Autowired
+	private IBranchService iBranhService;
+
+	@Autowired
+	private IBranchMilkTeaService iBranchMilkTeaService;
+
+	@Autowired
+	private IMilkTeaTypeService iMilkTeaTypeService;
+	
+	@Autowired
+	private IOrderService iOrderService;
+
+	@InitBinder
+	public void initBinder(WebDataBinder binder) {
+		// Removed - milkTeaType is now resolved via milkTeaTypeID in saveMilkTea
+	}
+
+	@GetMapping("/revenue")
+	public String revenue(HttpServletRequest request) {
+		// Lấy thông tin user từ session trực tiếp
+		HttpSession session = request.getSession(false); // Lấy session nếu có
+		User user = (User) session.getAttribute("account"); // Lấy thông tin user từ session
+
+		// Kiểm tra xem user có tồn tại và role của user có phải là admin (roleID == 1)
+		if (user != null && user.getRoleID() == 2) {
+			return "seller/revenue/revenue";
+		} else {
+			return "user/error"; // Nếu không phải admin hoặc không có user thì trả về trang lỗi
+		}
+		
+	}
+
+	@GetMapping("/branch")
+	public String branch(Model model, HttpServletRequest request) {
+		HttpSession session = request.getSession(false);
+	    User user = (User) session.getAttribute("account");
+	    
+	    // Kiểm tra nếu BranchID là null
+	    if (iBranhService.getBranchID(user.getUserID()) == null) {
+	        // Redirect đến endpoint add-branch
+	        return "redirect:/seller/add-branch";
+	    }
+	    
+	    // Lấy branch nếu tồn tại
+	    Optional<Branch> branchOptional = iBranhService.findById(iBranhService.getBranchID(user.getUserID()));
+	    if (branchOptional.isPresent()) {
+	        model.addAttribute("branch", branchOptional.get());
+	    } else {
+	        model.addAttribute("branch", new Branch());
+	    }
+	    
+	    return "seller/branch/branchhome";
+	}
+
+	@GetMapping("/milkTeas")
+	public String listMilkTea(Model model, @RequestParam(name = "pageNo", defaultValue = "1") Integer pageNo,
+			@RequestParam(required = false) Integer typeMilkTeaID, HttpServletRequest request) {
+		HttpSession session = request.getSession(false);
+	    User user = (User) session.getAttribute("account");
+	    
+	    // Kiểm tra nếu BranchID là null
+	    if (iBranhService.getBranchID(user.getUserID()) == null) {
+	        // Redirect đến endpoint add-branch
+	        return "redirect:/seller/add-branch";
+	    }
+	    Optional<Branch> branchOptional = iBranhService.findById(iBranhService.getBranchID(user.getUserID()));
+		Branch enBranch = branchOptional.get();
+		List<MilkTeaType> listType = iMilkTeaTypeService.findAll();
+		Page<BranchMilkTea> brMilkTea;
+		brMilkTea = iBranchMilkTeaService.getBranchMilkTeaByBranch(enBranch, pageNo);
+		if (brMilkTea == null) {
+			return "redirect:/seller/add-MilkTea";
+		} 
+		
+		model.addAttribute("totalPage", brMilkTea.getTotalPages());
+		model.addAttribute("listType", listType);
+		model.addAttribute("currentPage", pageNo);
+		model.addAttribute("milkTeas", brMilkTea);
+		return "seller/milkTea/list-MilkTea";
+	}
+
+	@GetMapping("/add-branch")
+	public String addBranch(Model model) {
+		Branch branch = new Branch();
+		model.addAttribute("branch", branch);
+		return "seller/Branch/add-Branch";
+	}
+	@GetMapping("/update-branch/{id}")
+	public String updateBranch(@PathVariable("id") int theid, Model model) {
+	    Optional<Branch> branch = iBranhService.findById(theid);
+	    if (branch.isPresent()) {
+	        model.addAttribute("branch", branch.get());
+	    } else {
+	        model.addAttribute("alert", "Không tìm thấy chi nhánh!");
+	    }
+	    return "seller/Branch/update-Branch";
+	}
+
+	@PostMapping("/saveBranch")
+	public String saveBranch(@ModelAttribute BranchDto branchDto, Model model, HttpServletRequest request) {
+	    String uploadDirectory = PathConstants.UPLOAD_DIRECTORY;
+	    List<String> storedFileNames = new ArrayList<>();
+
+	    try {
+	        for (MultipartFile image : branchDto.getImages()) {
+	            if (!image.isEmpty()) {
+	                String originalFileName = image.getOriginalFilename();
+	                String fileExtension = originalFileName.substring(originalFileName.lastIndexOf(".")).toLowerCase();
+
+	                if (!fileExtension.equals(".jpg") && !fileExtension.equals(".png")
+	                        && !fileExtension.equals(".jpeg")) {
+	                    model.addAttribute("alert", "Chỉ chấp nhận ảnh JPG, PNG, JPEG");
+	                    return "seller/branch/add-Branch";
+	                }
+
+	                String storageFileName = System.currentTimeMillis() + "_" + originalFileName;
+
+	                Path uploadPath = Paths.get(uploadDirectory);
+	                if (!Files.exists(uploadPath)) {
+	                    Files.createDirectories(uploadPath);
+	                }
+
+	                try (InputStream inputStream = image.getInputStream()) {
+	                    Files.copy(inputStream, uploadPath.resolve(storageFileName),
+	                            StandardCopyOption.REPLACE_EXISTING);
+	                }
+	                storedFileNames.add(storageFileName);
+	            }
+	        }
+	    } catch (Exception ex) {
+	        model.addAttribute("alert", "Có lỗi xảy ra khi upload ảnh: " + ex.getMessage());
+	        return "seller/branch/add-Branch";
+	    }
+
+	    Branch branch;
+	    if (branchDto.getBranchID() != null) {
+	        Optional<Branch> optionalBranch = iBranhService.findById(branchDto.getBranchID());
+	        if (optionalBranch.isPresent()) {
+	            branch = optionalBranch.get();
+	        } else {
+	            branch = new Branch();
+	        }
+	    } else {
+	        branch = new Branch();
+	    }
+
+	    branch.setAddress(branchDto.getAddress());
+	    branch.setBranchName(branchDto.getBranchName());
+	    branch.setOpenTime(branchDto.getOpenTime());
+	    branch.setCloseTime(branchDto.getCloseTime());
+	    branch.setIntroduction(branchDto.getIntroduction());
+	    branch.setDescription(branchDto.getDescription());
+
+	    HttpSession session = request.getSession(false);
+	    User user = (User) session.getAttribute("account");
+
+	    branch.setUser(user);
+	    branch.setImages(String.join(",", storedFileNames));
+
+	    iBranhService.save(branch); // Gọi service lưu vào DB
+	    model.addAttribute("success", "Thêm hoặc cập nhật thông tin thành công!");
+
+	    return "redirect:/seller/branch";
+	}
+
+
+	@GetMapping("/add-milkTea")
+	public String showAddMilkTeaForm(Model model) {
+		List<MilkTeaType> list = iMilkTeaTypeService.findAll();
+		model.addAttribute("listType", list);
+		model.addAttribute("milkTeaDto", new MilkTeaDto());
+		return "seller/milkTea/add-MilkTea";
+	}
+	
+	@GetMapping("/update-milkTea/{id}")
+	public String showUpdateMilkTeaForm(@PathVariable("id") int theid, Model model, HttpServletRequest request) {
+		List<MilkTeaType> list = iMilkTeaTypeService.findAll();
+		Optional<MilkTea> milkTeaOpt = iMilkTeaService.findByIdWithType(theid);
+		if (!milkTeaOpt.isPresent()) {
+			model.addAttribute("alert", "Không tìm thấy sản phẩm!");
+			model.addAttribute("milkTeaDto", new MilkTeaDto());
+			model.addAttribute("listType", list);
+			return "seller/milkTea/update-MilkTea";
+		}
+		MilkTea milkTea = milkTeaOpt.get();
+		MilkTeaDto dto = new MilkTeaDto();
+		dto.setMilkTeaID(milkTea.getMilkTeaID());
+		dto.setMilkTeaName(milkTea.getMilkTeaName());
+		dto.setMilkTeaTypeID(milkTea.getMilkTeaType() != null ? milkTea.getMilkTeaType().getMilkTeaTypeID() : null);
+		dto.setMilkTeaType(milkTea.getMilkTeaType());
+		dto.setPrice(milkTea.getPrice());
+		dto.setDiscountPrice(milkTea.getDiscountPrice());
+		dto.setDescription(milkTea.getDescription());
+		dto.setIntroduction(milkTea.getIntroduction());
+		HttpSession session = request.getSession(false);
+		User user = (User) session.getAttribute("account");
+		Integer branchId = iBranhService.getBranchID(user.getUserID());
+		if (branchId != null) {
+			BranchMilkTea bmt = iBranchMilkTeaService.getByBranchIDAndMilkTeaID(branchId, milkTea.getMilkTeaID());
+			if (bmt != null) dto.setStockQuantity(bmt.getStockQuantity());
+		}
+		model.addAttribute("milkTeaDto", dto);
+		model.addAttribute("listType", list);
+		return "seller/milkTea/update-MilkTea";
+	}
+
+	@PostMapping("/milktea/save")
+	public String saveMilkTea(@ModelAttribute MilkTeaDto milkTeaDto, Model model, HttpServletRequest request) {
+		String uploadDirectory = PathConstants.UPLOAD_DIRECTORY; // Thư mục lưu ảnh
+		List<String> storedFileNames = new ArrayList<>(); // Danh sách tên ảnh lưu trong DB
+
+		try {
+			if (milkTeaDto.getImages() != null) {
+			// Duyệt qua từng file trong mảng MultipartFile[]
+			for (MultipartFile image : milkTeaDto.getImages()) {
+				if (!image.isEmpty()) {
+					String originalFileName = image.getOriginalFilename();
+					String fileExtension = originalFileName.substring(originalFileName.lastIndexOf(".")).toLowerCase();
+
+					// Kiểm tra định dạng ảnh hợp lệ
+					if (!fileExtension.equals(".jpg") && !fileExtension.equals(".png")
+							&& !fileExtension.equals(".jpeg")) {
+						model.addAttribute("alert", "Chỉ chấp nhận ảnh JPG, PNG, JPEG");
+						return "seller/milkTea/add-MilkTea";
+					}
+
+					// Tạo tên file lưu trữ
+					String storageFileName = System.currentTimeMillis() + "_" + originalFileName;
+
+					// Lưu file vào thư mục
+					Path uploadPath = Paths.get(uploadDirectory);
+					if (!Files.exists(uploadPath)) {
+						Files.createDirectories(uploadPath); // Tạo thư mục nếu chưa tồn tại
+					}
+
+					try (InputStream inputStream = image.getInputStream()) {
+						Files.copy(inputStream, uploadPath.resolve(storageFileName),
+								StandardCopyOption.REPLACE_EXISTING);
+					}
+
+					// Thêm tên file vào danh sách
+					storedFileNames.add(storageFileName);
+				}
+			}
+			} // end if images != null
+		} catch (Exception ex) {
+			model.addAttribute("alert", "Có lỗi xảy ra khi upload ảnh: " + ex.getMessage());
+			return "seller/milkTea/add-MilkTea";
+		}
+
+		// Resolve MilkTeaType from milkTeaTypeID
+		if (milkTeaDto.getMilkTeaTypeID() != null) {
+			iMilkTeaTypeService.findById(milkTeaDto.getMilkTeaTypeID())
+				.ifPresent(milkTeaDto::setMilkTeaType);
+		}
+
+		// Lưu thông tin MilkTea vào cơ sở dữ liệu
+		MilkTea milkTea;
+	    if (milkTeaDto.getMilkTeaID() != null) {
+	        Optional<MilkTea> optionalMilkTea = iMilkTeaService.findById(milkTeaDto.getMilkTeaID());
+	        if (optionalMilkTea.isPresent()) {
+	        	milkTea = optionalMilkTea.get();
+	        } else {
+	        	milkTea = new MilkTea();
+	        }
+	    } else {
+	    	milkTea = new MilkTea();
+	    }
+	    
+		milkTea.setMilkTeaName(milkTeaDto.getMilkTeaName());
+		milkTea.setPrice(milkTeaDto.getPrice());
+		milkTea.setDiscountPrice(milkTeaDto.getDiscountPrice());
+		milkTea.setDescription(milkTeaDto.getDescription());
+		milkTea.setIntroduction(milkTeaDto.getIntroduction());
+		milkTea.setMilkTeaType(milkTeaDto.getMilkTeaType());
+		
+		// Chỉ cập nhật ảnh nếu có ảnh mới được upload
+		if (!storedFileNames.isEmpty()) {
+			milkTea.setImage(String.join(",", storedFileNames));
+		}
+
+		iMilkTeaService.save(milkTea); // Gọi service lưu vào DB
+		model.addAttribute("success", "Thêm trà sữa thành công!");
+		
+		if (milkTeaDto.getMilkTeaID() == null) {
+			HttpSession session = request.getSession(false);
+		    User user = (User) session.getAttribute("account");
+		    
+		    // Lấy branch nếu tồn tại
+		    Optional<Branch> branchOptional = iBranhService.findById(iBranhService.getBranchID(user.getUserID()));
+			Branch enBranch = branchOptional.get();
+			BranchMilkTea branchMilkTea = new BranchMilkTea(enBranch, milkTea, milkTeaDto.getStockQuantity());
+			iBranchMilkTeaService.save(branchMilkTea);
+		}
+		else {
+			HttpSession session = request.getSession(false);
+			User user = (User) session.getAttribute("account");
+			Integer branchId = iBranhService.getBranchID(user.getUserID());
+			if (branchId != null) {
+				BranchMilkTea branchMilkTea = iBranchMilkTeaService.getByBranchIDAndMilkTeaID(branchId, milkTea.getMilkTeaID());
+				if (branchMilkTea != null && milkTeaDto.getStockQuantity() != null) {
+					branchMilkTea.setStockQuantity(milkTeaDto.getStockQuantity());
+					iBranchMilkTeaService.save(branchMilkTea);
+				}
+			}
+		}
+		return "redirect:/seller/milkTeas"; // Chuyển hướng đến danh sách MilkTea
+	}
+	
+	@GetMapping("/orders")
+	public String listOrder(Model model, @RequestParam(name = "pageNo", defaultValue = "1") Integer pageNo
+			, HttpServletRequest request) {
+		Pageable pageable = PageRequest.of(pageNo-1, 2);
+		Page<Order> listOrder= iOrderService.findAll(pageable);
+		model.addAttribute("totalPage", listOrder.getTotalPages());
+		model.addAttribute("currentPage", pageNo);
+		model.addAttribute("listOrder", listOrder);
+		return "seller/order/list-Order";
+	}
+	
+	@PostMapping("/orders/{id}/update-status")
+	@ResponseBody
+	public ResponseEntity<Map<String, Object>> updateOrderStatus(@PathVariable int id) {
+	    Map<String, Object> response = new HashMap<>();
+	    try {
+	        Optional<Order> opOrder = iOrderService.findById(id);
+	        Order order = opOrder.get();
+	        if (order != null && !order.getStatus().equals("COMPLETED")) {
+	            order.setStatus(OrderStatus.COMPLETED);
+	            iOrderService.save(order);
+	            response.put("success", true);
+	        } else {
+	            response.put("success", false);
+	            response.put("message", "Order not found or already completed.");
+	        }
+	    } catch (Exception e) {
+	        response.put("success", false);
+	        response.put("message", "An error occurred.");
+	    }
+	    return ResponseEntity.ok(response);
+	}
+
+}
